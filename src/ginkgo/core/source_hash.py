@@ -67,6 +67,7 @@ _RESOURCE_ONLY_KWARGS = frozenset(
         "retry_on",
         "retry_on_exit_codes",
         "threads",
+        "time_limit",
     }
 )
 

@@ -47,6 +47,22 @@ def train_model(dataset: folder) -> file:
   `--memory` budget rounds it up to a whole GiB, so `512Mi` counts as 1 GiB.
 - `gpu=N`: GPUs. `gpu_type` names the kind of GPU a remote
   [executor](/ginkgo/guide/concepts/#glossary) should provide.
+- `time_limit="5h"`: the longest one attempt may run, as `"90m"`, `"5h"`, `"2d"`
+  or `"01:30:00"`. Executors that support a limit, such as Slurm, apply it; local
+  runs ignore it.
+
+A Python task's body can read what its attempt was given, after site overrides
+and any memory escalation, with `ginkgo.task_resources()`. Unlike a `threads`
+parameter, this keeps the values out of the cache key:
+
+```python
+from ginkgo import task, task_resources
+
+@task(threads=4, memory="16Gi")
+def fit(table: file) -> file:
+    allocated = task_resources()   # threads=4, memory_mib=16384, time_limit_seconds=None
+    ...
+```
 
 The `--gpus` budget does not assign devices. Ginkgo does not set
 `CUDA_VISIBLE_DEVICES`, so every local task sees every GPU.

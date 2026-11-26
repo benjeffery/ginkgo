@@ -1139,6 +1139,7 @@ def task(
     gpu: int = 0,
     gpu_type: str | None = None,
     memory_retry_multiplier: float = 1.0,
+    time_limit: str | None = None,
     resources: dict[str, int] | None = None,
     executor: str | None = None,
     export_thread_env: bool = False,
@@ -1208,6 +1209,10 @@ def task(
         run's ``--memory`` budget. Use with ``retries`` for OOM-prone tasks
         (e.g. ``memory="16Gi", retries=2, memory_retry_multiplier=2`` runs
         attempts at 16, 32, and 64 GiB). Requires ``memory``.
+    time_limit : str | None
+        Wall-clock limit for one attempt (``"90m"``, ``"5h"``,
+        ``"01:30:00"``), mapped by remote executors that support one, such
+        as Slurm's ``--time``. Local runs ignore it.
     resources : dict[str, int] | None
         User-defined resource demands (e.g. ``{"api_calls": 2}``), scheduled
         against run-level budgets from ``[resources.budgets]`` config or
@@ -1278,6 +1283,7 @@ def task(
                 gpu=gpu,
                 gpu_type=gpu_type,
                 memory_retry_multiplier=memory_retry_multiplier,
+                time_limit=time_limit,
                 custom=dict(resources or {}),
             ),
             executor=executor,

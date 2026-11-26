@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from types import TracebackType
 from typing import TYPE_CHECKING, Any
 
+from ginkgo.runtime.task_context import task_resources_scope
 from ginkgo.runtime.module_loader import load_module
 from ginkgo.runtime.environment.secrets import redact_text
 from ginkgo.runtime.artifacts.value_codec import decode_value, encode_dynamic_value, encode_value
@@ -317,7 +318,8 @@ def run_task(
             usage_start = _rusage_snapshot()
             peak_rss = _TaskPeakRss(usage_start=usage_start) if usage_start is not None else None
             try:
-                result = fn(**decoded_args)
+                with task_resources_scope(payload):
+                    result = fn(**decoded_args)
             finally:
                 measured = _body_usage(usage_start=usage_start, peak_rss=peak_rss)
             ran_directive = _runs_its_directive_here(task_def=task_binding, result=result)

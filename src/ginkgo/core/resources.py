@@ -26,6 +26,46 @@ _MEMORY_MULTIPLIERS: dict[str, float] = {
 }
 
 
+_TIME_LIMIT_PATTERN = re.compile(r"^(\d+)\s*(s|m|h|d)$")
+_TIME_LIMIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def parse_time_limit(value: str | int | None) -> int | None:
+    """Parse a wall-clock limit to whole seconds.
+
+    Accepts a number with a unit (``"90m"``, ``"5h"``, ``"2d"``, ``"30s"``)
+    or ``HH:MM:SS``. ``None`` means the executor's own default.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, str):
+        raise ValueError(  # noqa: TRY004 - a declaration error, as memory's are
+            f"Invalid time_limit {value!r}: use a string such as '90m', '5h' or '01:30:00'"
+        )
+    text = value.strip()
+    match = _TIME_LIMIT_PATTERN.match(text)
+    if match:
+        seconds = int(match.group(1)) * _TIME_LIMIT_SECONDS[match.group(2)]
+    else:
+        parts = text.split(":")
+        if len(parts) != 3 or not all(part.isdigit() for part in parts):
+            raise ValueError(
+                f"Invalid time_limit {value!r}: use a string such as '90m', '5h' or '01:30:00'"
+            )
+        hours, minutes, secs = (int(part) for part in parts)
+        seconds = hours * 3600 + minutes * 60 + secs
+    if seconds < 1:
+        raise ValueError(f"time_limit must be positive, got {value!r}")
+    return seconds
+
+
+def memory_mib(value: str | None) -> int | None:
+    """Return a Kubernetes-style memory string in whole MiB, rounded up."""
+    if value is None:
+        return None
+    return math.ceil(memory_gib(value) * 1024)
+
+
 def parse_memory(value: str | None) -> int:
     """Parse a Kubernetes-style memory string to whole GiB.
 
@@ -113,6 +153,10 @@ class Resources:
         with ``memory_gb * memory_retry_multiplier ** k``, capped at the
         run's ``--memory`` budget. ``1.0`` (default) disables escalation.
         Requires ``memory`` to be set.
+    time_limit : str | None
+        Wall-clock limit for one attempt, such as ``"90m"``, ``"5h"`` or
+        ``"01:30:00"``. Remote executors that support limits map it to the
+        job's limit (a Slurm ``--time``, say); local runs ignore it.
     custom : dict[str, int]
         User-defined resource demands (e.g. ``{"api_calls": 2}``), scheduled
         against run-level budgets from ``[resources.budgets]`` config or
@@ -127,6 +171,7 @@ class Resources:
     gpu: int = 0
     gpu_type: str | None = None
     memory_retry_multiplier: float = 1.0
+    time_limit: str | None = None
     custom: dict[str, int] = field(default_factory=dict)
     _memory_gb: int = field(init=False, repr=False)
 
@@ -154,6 +199,12 @@ class Resources:
         if self.memory_retry_multiplier > 1 and self.memory is None:
             raise ValueError("memory_retry_multiplier requires memory to be set")
         object.__setattr__(self, "_memory_gb", parse_memory(self.memory))
+        parse_time_limit(self.time_limit)
+
+    @property
+    def time_limit_seconds(self) -> int | None:
+        """The wall-clock limit in seconds, or ``None`` for the executor default."""
+        return parse_time_limit(self.time_limit)
 
     @property
     def memory_gb(self) -> int:

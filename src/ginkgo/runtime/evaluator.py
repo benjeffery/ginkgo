@@ -26,7 +26,7 @@ from ginkgo.errors import CommandExitError, FailureKind, GinkgoError
 from ginkgo.params import ParamContext
 from ginkgo.plugins.api import RunnerContext, TaskInvocation, TaskKind, TaskRunner
 from ginkgo.plugins.registry import plugin_registry
-from ginkgo.core.resources import ResourceOverrides, Resources
+from ginkgo.core.resources import ResourceOverrides, Resources, memory_mib
 from ginkgo.core.task import TaskDef
 from ginkgo.core.types import tmp_dir
 from ginkgo.remote.staging import RemoteIdentityError
@@ -289,6 +289,7 @@ class NodeRun:
     declared_memory: str | None = None
     """The memory declaration as written, such as ``"64Mi"``, before rounding to GiB."""
     gpu: int = 0
+    time_limit_seconds: int | None = None
     custom_resources: dict[str, int] = field(default_factory=dict)
     executor_name: str | None = None
     result: Any = MISSING
@@ -324,6 +325,15 @@ class NodeRun:
     def remote(self) -> bool:
         """Whether the node is placed on a remote executor."""
         return self.executor_name is not None
+
+    @property
+    def memory_mib(self) -> int | None:
+        """This attempt's memory in MiB: the declaration, or its retry escalation."""
+        if self.declared_memory is None:
+            return None
+        if self.memory_gb != self.declared_memory_gb:
+            return self.memory_gb * 1024
+        return memory_mib(self.declared_memory)
 
     @property
     def label(self) -> str:
@@ -832,6 +842,7 @@ class ConcurrentEvaluator:
         node.declared_memory_gb = resources.memory_gb
         node.declared_memory = resources.memory
         node.gpu = resources.gpu
+        node.time_limit_seconds = resources.time_limit_seconds
         node.custom_resources = dict(resources.custom)
         node.executor_name = self.placement.resolve(task_def=node.task_def)
         # A remote worker passes files, folders and large values through the
@@ -1882,6 +1893,8 @@ class ConcurrentEvaluator:
             "attempt": node.attempt,
             "display_label": node.display_label,
             "threads": node.threads,
+            "memory_mib": node.memory_mib,
+            "time_limit_seconds": node.time_limit_seconds,
             "env": node.task_def.env,
             # A remote worker searches for the env where the driver did, and
             # checks that the env it finds is this one, locked as it is here.

@@ -85,6 +85,8 @@ class RemoteDispatchManager:
         payload["resources"] = {
             "threads": node.threads,
             "memory_gb": node.memory_gb,
+            "memory_mib": node.memory_mib,
+            "time_limit_seconds": node.time_limit_seconds,
             "gpu": node.gpu,
             "gpu_type": gpu_type,
         }
