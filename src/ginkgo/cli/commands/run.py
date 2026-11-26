@@ -64,6 +64,7 @@ from ginkgo.runtime.backend import EnvironmentRouter
 from ginkgo.runtime.evaluator import ConcurrentEvaluator, RootSkippedError
 from ginkgo.runtime.executor_registry import LOCAL, ExecutorRegistry
 from ginkgo.runtime.module_loader import display_path, load_module_from_path
+from ginkgo.runtime.volumes import DriverVolumes, open_driver_volumes
 from ginkgo.runtime.environment.resources import RunResourceMonitor
 from ginkgo.runtime.rundir import (
     RunDir,
@@ -334,8 +335,30 @@ def planned_task_rows(evaluator: ConcurrentEvaluator) -> list[tuple[int, str, st
     ]
 
 
-def run_workflow(
+def run_workflow(*, config_paths: list[Path], **options: Any) -> int:
+    """Run a workflow with its ``[volumes]`` mounted for as long as it runs.
+
+    The volumes are mounted before the workflow is imported, since its flow
+    builds paths below them, and unmounted once the run, or dry run, is over.
+    """
+    # Loaded as layers so top-level keys and the [params] table can combine
+    # by their own rules, without reading the files twice.
+    config_layers = load_runtime_config_layers(
+        project_root=Path.cwd(),
+        override_paths=config_paths,
+    )
+    with open_driver_volumes(
+        merge_config_layers(config_layers), project_root=Path.cwd()
+    ) as volumes:
+        return _run_workflow(
+            config_paths=config_paths, config_layers=config_layers, volumes=volumes, **options
+        )
+
+
+def _run_workflow(
     *,
+    config_layers: Any,
+    volumes: DriverVolumes | None,
     run_id: str | None = None,
     workflow_path: Path,
     workflow_discovered: bool = False,
@@ -374,12 +397,6 @@ def run_workflow(
     # The runtime config is loaded before the workflow is imported so that
     # declared parameters resolve against it regardless of whether the workflow
     # calls config() before or after param().
-    # Loaded as layers so top-level keys and the [params] table can combine
-    # by their own rules, without reading the files twice.
-    config_layers = load_runtime_config_layers(
-        project_root=Path.cwd(),
-        override_paths=config_paths,
-    )
     runtime_config = merge_config_layers(config_layers)
     param_config = params_table(config_layers)
     with config_session(
@@ -452,6 +469,7 @@ def run_workflow(
         "keep_going": keep_going,
         "rerun": frozenset(rerun),
         "output_copies": output_copies,
+        "volumes": volumes,
     }
     # A workspace whose ledger was deleted gets a new one from this run, which
     # leaves the older run directories unreadable without saying so. Asked

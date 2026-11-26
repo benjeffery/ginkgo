@@ -53,6 +53,7 @@ __all__ = [
     "EventSubscriberType",
     "ExecutorType",
     "MountDriverType",
+    "MountedVolume",
     "Notice",
     "ObjectStoreContext",
     "ObjectStoreType",
@@ -63,6 +64,8 @@ __all__ = [
     "TaskInvocation",
     "TaskKind",
     "TaskRunner",
+    "VolumeContext",
+    "VolumeType",
 ]
 
 
@@ -176,6 +179,108 @@ class MountDriverType:
     def keys(self) -> tuple[str, ...]:
         """The lookup keys: the URI scheme."""
         return (self.scheme,)
+
+
+# ----- Volumes ---------------------------------------------------------------
+
+
+class MountedVolume(Protocol):
+    """One process's mount of a volume: where it sees the files, and how it shares them.
+
+    Changes made through a mount stay private to it until :meth:`publish`;
+    :meth:`close` discards whatever is still private. Paths are relative to
+    the volume's root, ``/``-separated, with no leading slash.
+    """
+
+    @property
+    def path(self) -> Path:
+        """Where this process sees the volume's root."""
+        ...
+
+    @property
+    def source(self) -> str:
+        """What is mounted, as a URI, such as ``oci://bucket@namespace/prefix/``."""
+        ...
+
+    def publish(self, paths: Sequence[str] | None = None) -> None:
+        """Make the changes at and below *paths* (all, for ``None``) visible to other mounts."""
+        ...
+
+    def refresh(self, paths: Sequence[str]) -> None:
+        """See what is now published at and below *paths*, dropping this mount's own changes."""
+        ...
+
+    def digest(self, path: str) -> str | None:
+        """Identify the published file at *path* without reading it, or return ``None``.
+
+        Something the store keeps for each object, such as a checksum of its
+        bytes or its ETag. The driver uses it in place of the file's content
+        hash. A checksum leaves a file rewritten with the same bytes
+        unchanged; an ETag, which is new with every write, counts it as
+        changed. ``None`` makes ginkgo read the file.
+        """
+        ...
+
+    def close(self) -> None:
+        """Unmount, discarding what was not published."""
+        ...
+
+
+@dataclass(frozen=True, kw_only=True)
+class VolumeContext:
+    """What one process mounts a volume from.
+
+    Parameters
+    ----------
+    name : str
+        The volume's name, from ``[volumes.<name>]``.
+    settings : Mapping[str, Any]
+        The volume's table, without ``type`` and ``mountpoint``.
+    mountpoint : Path | None
+        The driver's fixed mountpoint, under which the workflow builds its
+        paths. ``None`` for a task's own mount, which the backend places
+        wherever it likes: ginkgo rewrites the task's paths to it.
+    role : str
+        ``"driver"`` for the run's own mount, which checks and hashes tasks'
+        outputs, or ``"task"`` for the mount one task attempt reads and
+        writes through.
+    """
+
+    name: str
+    settings: Mapping[str, Any]
+    mountpoint: Path | None
+    role: Literal["driver", "task"]
+
+
+@dataclass(frozen=True, kw_only=True)
+class VolumeType:
+    """A kind of volume, selected by ``type`` in a ``[volumes.<name>]`` table.
+
+    Every process that runs a task mounts the volume for itself: the driver
+    once per run, and each task attempt that reads or writes it, wherever it
+    runs. Ginkgo publishes a task's changes when the task succeeds and
+    refreshes the driver's mount before it checks the task's outputs.
+
+    Parameters
+    ----------
+    name : str
+        The ``type`` value.
+    label : str
+        Human-readable name for error messages.
+    mount : Callable[[VolumeContext], MountedVolume]
+        Mount the volume for this process; return once its files are visible.
+    """
+
+    point_name: ClassVar[str] = "volume type"
+
+    name: str
+    label: str
+    mount: Callable[[VolumeContext], MountedVolume]
+
+    @property
+    def keys(self) -> tuple[str, ...]:
+        """The lookup keys: the volume ``type``."""
+        return (self.name,)
 
 
 # ----- Secrets ---------------------------------------------------------------
@@ -658,6 +763,7 @@ Contribution = (
     | EnvironmentType
     | TaskKind
     | CliCommand
+    | VolumeType
 )
 """Every extension point a plugin can contribute to."""
 

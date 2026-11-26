@@ -34,6 +34,7 @@ RUNTIME_CONFIG_TABLES = frozenset(
         "remote",
         "resources",
         "secrets",
+        "volumes",
     }
 )
 """Top-level ``ginkgo.toml`` tables that configure ginkgo rather than the workflow.

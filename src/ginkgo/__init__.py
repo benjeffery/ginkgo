@@ -33,6 +33,7 @@ _EXPORTS = {
     "param": ("ginkgo.params", "param"),
     "per_branch": ("ginkgo.wildcards", "per_branch"),
     "project_root": ("ginkgo.project", "project_root"),
+    "publish": ("ginkgo.runtime.volumes", "publish"),
     "remote_file": ("ginkgo.core.remote", "remote_file"),
     "remote_folder": ("ginkgo.core.remote", "remote_folder"),
     "script": ("ginkgo.core.script", "script"),
@@ -44,6 +45,7 @@ _EXPORTS = {
     "task_resources": ("ginkgo.runtime.task_context", "task_resources"),
     "tmp_dir": ("ginkgo.core.types", "tmp_dir"),
     "untracked": ("ginkgo.core.types", "untracked"),
+    "volume": ("ginkgo.runtime.volumes", "volume"),
     "zip_expand": ("ginkgo.wildcards", "zip_expand"),
 }
 

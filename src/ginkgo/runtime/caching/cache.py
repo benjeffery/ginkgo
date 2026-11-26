@@ -255,6 +255,8 @@ class CacheStore:
     trust_mtimes: bool = False
     output_copies: bool = True
     """Keep a copy of every output in the artifact store (``[cache] output_copies``)."""
+    volumes: Any | None = None
+    """The run's ``DriverVolumes``: an output restored into a volume is published."""
     _root: Path = field(init=False, repr=False)
     _artifact_store: LocalArtifactStore = field(init=False, repr=False)
     _seen_env_materializations: set[tuple[str, str]] = field(
@@ -698,6 +700,11 @@ class CacheStore:
         # Non-path types: no output materialization needed.
         return True
 
+    def _publish_restored(self, path: Path) -> None:
+        """Publish an output restored into a volume, which the driver wrote through its mount."""
+        if self.volumes is not None:
+            self.volumes.publish([path])
+
     def _validate_file_output(self, path: Path, *, artifact_ids: dict[str, str]) -> bool:
         """Ensure one managed file output matches its cached artifact."""
         artifact_id = artifact_ids.get(str(path))
@@ -707,6 +714,7 @@ class CacheStore:
             self._artifact_store.restock(artifact_id=artifact_id, path=path)
             return True
         self._artifact_store.restore(artifact_id=artifact_id, dest_path=path)
+        self._publish_restored(path)
         return self._artifact_store.matches(artifact_id=artifact_id, path=path)
 
     def _validate_folder_output(self, path: Path, *, artifact_ids: dict[str, str]) -> bool:
@@ -718,6 +726,7 @@ class CacheStore:
             self._artifact_store.restock(artifact_id=artifact_id, path=path)
             return True
         self._artifact_store.restore(artifact_id=artifact_id, dest_path=path)
+        self._publish_restored(path)
         return self._artifact_store.matches(artifact_id=artifact_id, path=path)
 
     def load_extra_meta(self, *, cache_key: str) -> dict[str, Any] | None:

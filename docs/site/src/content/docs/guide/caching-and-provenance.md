@@ -284,6 +284,11 @@ unchanged, without reading it when its size and modification time are as
 recorded. An output that is missing or was edited cannot be restored, so its
 task runs again instead. `ginkgo db check` counts these records as intact.
 
+Outputs in a [volume](/ginkgo/guide/volumes/) are identified by what the store
+keeps for each object, such as a checksum, rather than by their contents, so no
+run reads them back. See
+[How Ginkgo Identifies Files In A Volume](/ginkgo/guide/volumes/#how-ginkgo-identifies-files-in-a-volume).
+
 ### Intermediate Files
 
 A cache hit puts a deleted output back, so deleting an intermediate file

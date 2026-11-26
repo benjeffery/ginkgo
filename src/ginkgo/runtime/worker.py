@@ -17,6 +17,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Any
 
 from ginkgo.runtime.task_context import task_resources_scope
+from ginkgo.runtime.volumes import TaskVolumes, task_volume_scope
 from ginkgo.runtime.module_loader import load_module
 from ginkgo.runtime.environment.secrets import redact_text
 from ginkgo.runtime.artifacts.value_codec import decode_value, encode_dynamic_value, encode_value
@@ -274,6 +275,9 @@ def run_task(
     # tears mounts down, even if hydration itself fails partway. Encoding
     # passes fuse markers through, so the encoded arguments show them.
     mounted_access = _local_fuse_access(args=payload["args"], base_dir=base_dir)
+    # Volumes the task refers to are mounted for this attempt alone, and
+    # unmounted in the finally below: what a failed attempt wrote is discarded.
+    volumes = TaskVolumes.from_payload(payload)
 
     stdout_path = payload.get("stdout_path")
     stderr_path = payload.get("stderr_path")
@@ -298,6 +302,7 @@ def run_task(
                 log_emitter=_queue_log_emitter(event_queue=_log_queue, context=log_context),
             ),
             _worker_param_session(payload=payload),
+            task_volume_scope(volumes),
         ):
             # The task's module is loaded before its arguments are decoded,
             # so a value of a class the workflow defines finds that module
@@ -308,6 +313,8 @@ def run_task(
                 name: decode_value(value, base_dir=base_dir, artifact_store=artifact_store)
                 for name, value in payload["args"].items()
             }
+            if volumes is not None:
+                decoded_args = volumes.enter(task_def=task_binding, args=decoded_args)
             if mounted_access is not None:
                 from ginkgo.remote.access.worker_hydration import hydrate_remote_inputs
 
@@ -340,6 +347,9 @@ def run_task(
                     # The command's own usage, not the body's that built it,
                     # and none for a command too quick to sample, as locally.
                     measured = command_usage or None
+            if volumes is not None:
+                # The driver's paths, once what the result names is published.
+                result = volumes.leave(result)
 
         # Encode while any fuse mounts are still live: the result may
         # reference paths inside a mount (e.g. an input path returned
@@ -392,6 +402,8 @@ def run_task(
     finally:
         if mounted_access is not None:
             mounted_access.close()
+        if volumes is not None:
+            volumes.close()
 
     if measured is not None:
         response["measured_resources"] = measured

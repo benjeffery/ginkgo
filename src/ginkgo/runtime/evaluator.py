@@ -107,6 +107,7 @@ from ginkgo.runtime.task_validation import (
     declared_output_paths,
 )
 from ginkgo.runtime.artifacts.value_codec import decode_dynamic_value, decode_value, encode_value
+from ginkgo.runtime.volumes import DriverVolumes, output_paths
 from ginkgo.runtime.worker import _task_log_context, run_task
 from ginkgo.workspace_layout import WorkspaceLayout
 
@@ -377,6 +378,8 @@ class ConcurrentEvaluator:
     event_bus: EventBus | None = None
     trust_mtimes: bool = False
     output_copies: bool = True
+    volumes: DriverVolumes | None = None
+    """The run's mounts of its ``[volumes]``, if it configures any."""
     keep_going: bool = False
     rerun: frozenset[str] = frozenset()
     """Tasks whose cache lookup is skipped, so they run again: each a task's
@@ -442,7 +445,13 @@ class ConcurrentEvaluator:
         # own connection rather than the recorder's, which belongs to the
         # writer thread.
         self._cache_index = CacheIndex.open(path=WorkspaceLayout.for_cwd().db)
-        self._hash_memo = HashMemo(index=self._cache_index)
+        # Files in volumes are named by their stored objects rather than read
+        # back, unless the store keeps copies, whose blobs are addressed by
+        # their contents.
+        self._hash_memo = HashMemo(
+            index=self._cache_index,
+            object_digests=self.volumes if not self.output_copies else None,
+        )
         self._cache_store = CacheStore(
             index=self._cache_index,
             backend=self.backend,
@@ -451,6 +460,7 @@ class ConcurrentEvaluator:
             hash_memo=self._hash_memo,
             trust_mtimes=self.trust_mtimes,
             output_copies=self.output_copies,
+            volumes=self.volumes,
         )
         self._staging_jobs = resolve_staging_jobs()
         self._digests = DigestRegistry()
@@ -1373,6 +1383,7 @@ class ConcurrentEvaluator:
 
     def _complete_node(self, *, node: NodeRun, value: Any) -> None:
         """Validate a task's result, then persist it and mark the node completed."""
+        self._settle_volume_outputs(node=node, value=value)
         value = self._finalize_result_value(node=node, value=value)
         finalize_started = time.perf_counter()
         # The task's own text, apart from the modules folded into its source
@@ -1802,14 +1813,49 @@ class ConcurrentEvaluator:
         never sees stale files. The *parent* is created; an ``Out[folder]``
         itself is left for the task body to create, since tools differ on
         whether they want it to already exist.
+
+        An output in a volume is cleared by the worker that writes it, in its
+        own mount: a deletion here would stay private to the driver's mount.
         """
         assert node.execution_args is not None
+        in_worker = not self._runs_on_driver(node=node)
         for _, path, _ in declared_output_paths(
             task_def=node.task_def, resolved_args=node.execution_args
         ):
             output = Path(path)
+            if in_worker and self.volumes is not None and self.volumes.owns(output):
+                continue
             remove_declared_output(output)
             output.parent.mkdir(parents=True, exist_ok=True)
+
+    def _runs_on_driver(self, *, node: NodeRun) -> bool:
+        """Whether *node*'s command runs in this process rather than a worker's."""
+        return task_kind(node.task_def).execution_mode == "driver" and node.executor_name is None
+
+    def _settle_volume_outputs(self, *, node: NodeRun, value: Any) -> None:
+        """Make a task's outputs in volumes visible to the driver before they are checked.
+
+        A worker published them from its own mount, so the driver's mount
+        refreshes them. A command the driver ran wrote them through the
+        driver's mount, which publishes them.
+        """
+        if self.volumes is None:
+            return
+        declared = (
+            [
+                path
+                for _, path, _ in declared_output_paths(
+                    task_def=node.task_def, resolved_args=node.execution_args or {}
+                )
+            ]
+            if node.task_def.output_params
+            else []
+        )
+        paths = output_paths(declared=declared, value=value)
+        if self._runs_on_driver(node=node):
+            self.volumes.publish(paths)
+        else:
+            self.volumes.acquire(paths)
 
     def _record_input_digests(self, *, node: NodeRun, digests: dict[str, str]) -> None:
         """Record the digest of each remote input fetched for *node*, by URI.
@@ -1936,6 +1982,8 @@ class ConcurrentEvaluator:
             "param_context": (
                 self.param_context.to_payload() if self.param_context is not None else None
             ),
+            # The worker mounts the volumes its task refers to for itself.
+            "volumes": self.volumes.payload() if self.volumes is not None else None,
         }
 
     def _decode_worker_result(self, *, node: NodeRun, payload: dict[str, Any]) -> Any:

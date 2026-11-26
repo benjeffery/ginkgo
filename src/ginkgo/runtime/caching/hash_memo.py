@@ -9,6 +9,11 @@ The memo is two tiers: a dict for the current process, and the ``digest_memo``
 table behind it so a second run starts warm (issue #245). Both are keyed by the
 same stat fingerprint, so a file whose size or mtime moved misses in both and
 is re-hashed.
+
+A file in a volume is identified by the object it is stored as instead, when
+the memo has ``object_digests``: reading it back would cost a download, and a
+FUSE mount's device and inode numbers change with every mount, so no stat
+fingerprint survives to the next run.
 """
 
 from __future__ import annotations
@@ -16,9 +21,22 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
-from ginkgo.core.hashing import hash_directory, hash_file, hash_str
+from ginkgo.core.hashing import hash_directory, hash_file, hash_str, new_hasher
 from ginkgo.runtime.caching.index import CacheIndex
+
+
+class ObjectDigests(Protocol):
+    """Digests of files that some storage identifies without their bytes being read."""
+
+    def owns(self, path: Path) -> bool:
+        """Whether *path* lies in that storage."""
+        ...
+
+    def digest(self, path: Path) -> str | None:
+        """Return the digest of the file at *path*, or ``None`` when it cannot say."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -52,7 +70,10 @@ class HashMemo:
     shared across the evaluator's thread pools.
     """
 
-    def __init__(self, *, index: CacheIndex | None = None) -> None:
+    def __init__(
+        self, *, index: CacheIndex | None = None, object_digests: ObjectDigests | None = None
+    ) -> None:
+        self._object_digests = object_digests
         self._file_cache: dict[_StatKey, str] = {}
         self._dir_cache: dict[str, str] = {}
         self._index = index
@@ -75,6 +96,9 @@ class HashMemo:
             Hex-encoded BLAKE3 digest.
         """
         resolved = path.resolve()
+        known = self._object_digest(path, resolved)
+        if known is not None:
+            return known
         key = _stat_key_for(resolved)
         with self._lock:
             cached = self._file_cache.get(key)
@@ -108,6 +132,9 @@ class HashMemo:
         str
             Hex-encoded BLAKE3 digest.
         """
+        known = self._object_tree_digest(path)
+        if known is not None:
+            return known
         fingerprint = self._dir_fingerprint(path)
         with self._lock:
             cached = self._dir_cache.get(fingerprint)
@@ -143,6 +170,44 @@ class HashMemo:
             self._file_cache[key] = digest
 
     # -- internals -----------------------------------------------------------
+
+    def _object_digest(self, path: Path, resolved: Path) -> str | None:
+        """Ask for *path*'s object digest as spelled, then as resolved.
+
+        The workflow spells paths below the volume's root, which a symlinked
+        parent directory would resolve away from; a symlink in the volume
+        resolves to the file it names there.
+        """
+        if self._object_digests is None:
+            return None
+        known = self._object_digests.digest(path)
+        if known is None and resolved != path:
+            known = self._object_digests.digest(resolved)
+        return known
+
+    def _object_tree_digest(self, path: Path) -> str | None:
+        """Digest a directory in object storage from its listing and its files' object digests.
+
+        Laid out as :func:`~ginkgo.core.hashing.hash_directory` lays out
+        contents, with each file's object digest in place of its bytes.
+        ``None`` when the directory is elsewhere, or any of its files has no
+        object digest, so the caller reads the contents.
+        """
+        if self._object_digests is None or not self._object_digests.owns(path):
+            return None
+        hasher = new_hasher()
+        hasher.update(b"ginkgo-object-tree\0")
+        for child in sorted(path.rglob("*"), key=lambda item: str(item.relative_to(path))):
+            relative = child.relative_to(path).as_posix().encode("utf-8")
+            if child.is_dir():
+                hasher.update(b"D" + len(relative).to_bytes(8, byteorder="big") + relative)
+                continue
+            digest = self._object_digest(child, child.resolve())
+            if digest is None:
+                return None
+            hasher.update(b"F" + len(relative).to_bytes(8, byteorder="big") + relative)
+            hasher.update(digest.encode("ascii"))
+        return hasher.hexdigest()
 
     def _recall(self, kind: str, fingerprint: str) -> str | None:
         """Return a digest remembered by an earlier run, if there is one."""

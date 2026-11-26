@@ -352,6 +352,10 @@ accounting (`sacct`) is not needed. A job that leaves the queue without a
 response, killed for its memory or time limit say, fails with its Slurm log,
 and `retries` apply as usual. Stopping the run cancels its jobs with `scancel`.
 
+Outputs that live in object storage rather than on the shared filesystem go
+in a [volume](/ginkgo/guide/volumes/): each job then mounts the bucket itself and
+publishes what its task wrote when the task succeeds.
+
 Any executor type can declare that its workers share the driver's filesystem
 (`ExecutorType(shared_filesystem=True)`). Such an executor is handed the payload
 a local worker gets, with its transport directory under `.ginkgo/transport`.
