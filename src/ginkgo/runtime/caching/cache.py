@@ -253,6 +253,8 @@ class CacheStore:
     placement: Any | None = None  # Placement; typed as Any to avoid circular import
     hash_memo: HashMemo | None = None
     trust_mtimes: bool = False
+    output_copies: bool = True
+    """Keep a copy of every output in the artifact store (``[cache] output_copies``)."""
     _root: Path = field(init=False, repr=False)
     _artifact_store: LocalArtifactStore = field(init=False, repr=False)
     _seen_env_materializations: set[tuple[str, str]] = field(
@@ -275,6 +277,7 @@ class CacheStore:
                     root=WorkspaceLayout.sibling_of(self._root).artifacts,
                     hash_memo=self.hash_memo,
                     index=self.index,
+                    keep_copies=self.output_copies,
                 ),
             )
 
@@ -982,7 +985,10 @@ class CacheStore:
             f"cache artifact {artifact_id} is missing from the artifact store"
             for artifact_id in self.index.cache_artifact_ids()
             if not self._artifact_store.exists(artifact_id=artifact_id)
-            or not self._artifact_store.artifact_path(artifact_id=artifact_id).exists()
+            or not (
+                self._artifact_store.is_reference(artifact_id=artifact_id)
+                or self._artifact_store.artifact_path(artifact_id=artifact_id).exists()
+            )
         ]
         return problems
 

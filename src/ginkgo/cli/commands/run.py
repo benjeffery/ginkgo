@@ -435,6 +435,7 @@ def run_workflow(
     resource_budgets = resource_budgets_from_config(runtime_config.get("resources"))
     resource_budgets.update(parse_resource_budget_args(resource_args))
     keep_events_for = event_retention(runtime_config)
+    output_copies = cache_output_copies(runtime_config)
     # Shared by the validate/dry-run evaluator and the run evaluator below —
     # the two must resolve resources and placement identically.
     evaluator_kwargs: dict[str, Any] = {
@@ -450,6 +451,7 @@ def run_workflow(
         "param_context": param_context,
         "keep_going": keep_going,
         "rerun": frozenset(rerun),
+        "output_copies": output_copies,
     }
     # A workspace whose ledger was deleted gets a new one from this run, which
     # leaves the older run directories unreadable without saying so. Asked
@@ -1218,3 +1220,16 @@ def _warn_unserved_notifications(*, config: Any, warn: Callable[[str], None]) ->
             plugin_registry().get(EventSubscriberType, name)
         except PluginNotFoundError as exc:
             warn(f"[notifications.{name}] is configured but nothing will send it. {exc}")
+
+
+def cache_output_copies(runtime_config: dict[str, Any]) -> bool:
+    """Return ``[cache] output_copies``: whether outputs are copied into the artifact store."""
+    cache = runtime_config.get("cache") or {}
+    if not isinstance(cache, dict):
+        raise ValueError("[cache] must be a table")  # noqa: TRY004 - a config error, as elsewhere
+    value = cache.get("output_copies", True)
+    if not isinstance(value, bool):
+        raise ValueError(  # noqa: TRY004 - a config error, as elsewhere
+            f"[cache] output_copies must be true or false, got {value!r}"
+        )
+    return value

@@ -376,6 +376,7 @@ class ConcurrentEvaluator:
     secret_resolver: SecretResolver | None = None
     event_bus: EventBus | None = None
     trust_mtimes: bool = False
+    output_copies: bool = True
     keep_going: bool = False
     rerun: frozenset[str] = frozenset()
     """Tasks whose cache lookup is skipped, so they run again: each a task's
@@ -449,6 +450,7 @@ class ConcurrentEvaluator:
             placement=self.placement,
             hash_memo=self._hash_memo,
             trust_mtimes=self.trust_mtimes,
+            output_copies=self.output_copies,
         )
         self._staging_jobs = resolve_staging_jobs()
         self._digests = DigestRegistry()

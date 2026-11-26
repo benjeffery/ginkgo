@@ -29,6 +29,7 @@ from __future__ import annotations
 import logging
 import shutil
 import stat
+from dataclasses import replace
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -58,6 +59,10 @@ _COPY_CHUNK = 1 << 20
 # Longer than any real file extension; the digest already spends 64 of the
 # filename's 255 bytes, so an unbounded suffix could make store() fail.
 _MAX_EXTENSION_LEN = 32
+
+
+REFERENCE_BACKEND = "reference"
+"""``storage_backend`` of a record whose bytes the store did not keep."""
 
 
 @runtime_checkable
@@ -220,6 +225,13 @@ class LocalArtifactStore:
         opened here: a read path passes a reader, a remote worker passes an
         in-memory index, and neither should have a database created for it as
         the side effect of constructing a store.
+    keep_copies : bool
+        Copy each stored output into the store, so a cache hit can restore it.
+        ``False`` records only its digest (``storage_backend="reference"``):
+        the output's own path is then the only copy, a hit checks that it is
+        still there unchanged, and a missing or edited output re-runs its
+        task. For outputs too large to keep twice, such as those a workflow
+        writes to durable shared storage.
     """
 
     def __init__(
@@ -228,7 +240,9 @@ class LocalArtifactStore:
         index: CacheIndex,
         root: Path | None = None,
         hash_memo: HashMemo | None = None,
+        keep_copies: bool = True,
     ) -> None:
+        self._keep_copies = keep_copies
         self._root = root if root is not None else WorkspaceLayout.for_cwd().artifacts
         self._blobs_dir = self._root / "blobs"
         self._trees_dir = self._root / "trees"
@@ -313,6 +327,14 @@ class LocalArtifactStore:
             ``True`` when the restored content matches the artifact digest.
         """
         record = self._load_record(artifact_id=artifact_id)
+        if record.storage_backend == REFERENCE_BACKEND:
+            # Only the digest was kept: the task re-runs to write the output again.
+            logger.info(
+                "Artifact %s was not kept; re-running the task that wrote %s",
+                artifact_id,
+                dest_path,
+            )
+            return False
         dest_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Remove any prior materialization before restoring fresh content.
@@ -355,6 +377,8 @@ class LocalArtifactStore:
             The working-tree copy to store from.
         """
         record = self._load_record(artifact_id=artifact_id)
+        if not self._keep_copies or record.storage_backend == REFERENCE_BACKEND:
+            return
         if record.kind == "blob":
             missing = not self._blob_path(record).exists()
         else:
@@ -399,6 +423,11 @@ class LocalArtifactStore:
         bool
         """
         return self._index.artifact(artifact_id) is not None
+
+    def is_reference(self, *, artifact_id: str) -> bool:
+        """Whether the store recorded only *artifact_id*'s digest, keeping no bytes."""
+        record = self._index.artifact(artifact_id)
+        return record is not None and record.storage_backend == REFERENCE_BACKEND
 
     def load_record(self, *, artifact_id: str) -> ArtifactRecord | None:
         """Return the stored metadata record for one artifact.
@@ -541,6 +570,14 @@ class LocalArtifactStore:
             digest=digest, extension=src_path.suffix, size=src_path.stat().st_size
         )
         blob_path = self._blob_path(record)
+        if not self._keep_copies:
+            if record.storage_backend != REFERENCE_BACKEND and blob_path.exists():
+                return record  # The bytes are already kept; nothing to add.
+            record = replace(record, storage_backend=REFERENCE_BACKEND)
+            self.put_record(record)
+            return record
+        if record.storage_backend == REFERENCE_BACKEND:
+            record = replace(record, storage_backend="local")
 
         if not blob_path.exists():
             # chmod on a hardlinked blob also flips the source's mode;
@@ -570,7 +607,7 @@ class LocalArtifactStore:
         real_src = src_path.resolve()
 
         # Store the blob content for each manifest entry.
-        for entry in tree_ref.entries:
+        for entry in tree_ref.entries if self._keep_copies else ():
             child = real_src / Path(entry.relative_path)
             # Store the blob.
             blob_path = self._blobs_dir / entry.blob_digest
@@ -591,7 +628,7 @@ class LocalArtifactStore:
             extension="",
             size=total_size,
             created_at=now_iso(),
-            storage_backend="local",
+            storage_backend="local" if self._keep_copies else REFERENCE_BACKEND,
         )
         self.put_record(record)
         return record
@@ -818,6 +855,12 @@ class LocalArtifactStore:
         for artifact_id in self.list_artifact_ids():
             record = self._index.artifact(artifact_id)
             path = self.artifact_path(artifact_id=artifact_id)
+            if (
+                record is not None
+                and record.storage_backend == REFERENCE_BACKEND
+                and record.kind == "blob"
+            ):
+                continue  # Only the digest was kept, by design.
             if not path.exists():
                 problems.append(f"artifact {artifact_id} has a row but no bytes")
                 continue

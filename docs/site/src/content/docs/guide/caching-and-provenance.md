@@ -267,6 +267,23 @@ If you delete `.ginkgo/artifacts/` but the outputs are intact, the next cache
 hit stores them again. If an output is also gone or edited by then, it can't
 be restored, so its task re-runs.
 
+### Outputs Too Large To Keep Twice
+
+A workflow whose outputs already live on durable shared storage can tell Ginkgo
+not to copy them:
+
+```toml
+# ginkgo.toml
+[cache]
+output_copies = false
+```
+
+Ginkgo then records each output's digest and size but stores no bytes under
+`.ginkgo/artifacts/`. A cache hit checks that every output is still there and
+unchanged, without reading it when its size and modification time are as
+recorded. An output that is missing or was edited cannot be restored, so its
+task runs again instead. `ginkgo db check` counts these records as intact.
+
 ### Intermediate Files
 
 A cache hit puts a deleted output back, so deleting an intermediate file
