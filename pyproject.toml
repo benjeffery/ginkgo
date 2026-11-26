@@ -21,6 +21,7 @@ dependencies = [
 agent = ["ginkgo-agent==0.5.0"]
 aws = ["ginkgo-aws==0.5.0"]
 k8s = ["ginkgo-k8s==0.5.0"]
+slurm = ["ginkgo-slurm==0.5.0"]
 gcp = ["ginkgo-gcp==0.5.0"]
 notebook = ["ginkgo-notebook==0.5.0"]
 oci = ["ginkgo-oci==0.5.0"]
@@ -37,6 +38,7 @@ all = [
     "ginkgo-pixi==0.5.0",
     "ginkgo-report==0.5.0",
     "ginkgo-slack==0.5.0",
+    "ginkgo-slurm==0.5.0",
 ]
 
 [project.urls]
@@ -90,6 +92,7 @@ ginkgo-oci = { path = "plugins/ginkgo-oci", editable = true }
 ginkgo-pixi = { path = "plugins/ginkgo-pixi", editable = true }
 ginkgo-report = { path = "plugins/ginkgo-report", editable = true }
 ginkgo-slack = { path = "plugins/ginkgo-slack", editable = true }
+ginkgo-slurm = { path = "plugins/ginkgo-slurm", editable = true }
 
 [tool.pixi.feature.dev.dependencies]
 pytest = ">=8.0"

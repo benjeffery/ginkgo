@@ -60,6 +60,7 @@ plugins in this repository, each one an extra of `ginkgo-workflow`:
 - `ginkgo-oci`: the `oci://` object store and the rclone FUSE driver
 - `ginkgo-pixi`: Pixi environments for tasks' `env="name"`, and `ginkgo env`
 - `ginkgo-k8s`: the Kubernetes executor
+- `ginkgo-slurm`: the Slurm executor, for clusters whose nodes share the project's filesystem
 - `ginkgo-notebook`: `@task("notebook")`, which runs marimo notebooks
 - `ginkgo-report`: the `ginkgo report` command, for HTML run reports
 - `ginkgo-slack`: Slack run notifications

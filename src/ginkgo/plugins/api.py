@@ -84,6 +84,14 @@ class ExecutorType:
         runs.
     build : Callable[[Mapping[str, Any]], RemoteExecutor]
         Construct the backend from the executor table's settings.
+    shared_filesystem : bool
+        Whether the backend's workers see the driver's filesystem at the same
+        paths, as an HPC cluster's nodes see a shared home or project
+        directory. Such a backend is handed the same payload a local worker
+        gets: arguments, outputs, task logs and the transport directory stay
+        at their driver paths, nothing goes through an artifact store, and its
+        worker runs :func:`ginkgo.runtime.worker.run_task` from the project
+        root.
     """
 
     point_name: ClassVar[str] = "executor type"
@@ -92,6 +100,7 @@ class ExecutorType:
     label: str
     required_settings: tuple[str, ...]
     build: Callable[[Mapping[str, Any]], RemoteExecutor]
+    shared_filesystem: bool = False
 
     @property
     def keys(self) -> tuple[str, ...]:

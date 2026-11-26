@@ -204,6 +204,19 @@ class ExecutorRegistry:
             self._built[name] = built
         return built
 
+    def shares_filesystem(self, name: str) -> bool:
+        """Whether executor *name*'s workers see the driver's paths unchanged.
+
+        Answered from the executor type, so it needs no backend: the run
+        decides before the first dispatch whether it needs an artifact store.
+        """
+        spec = self.specs.get(name)
+        if spec is None:
+            return False
+        if spec.type == "prebuilt":
+            return bool(getattr(self._built.get(name), "shared_filesystem", False))
+        return plugin_registry().get(ExecutorType, spec.type).shared_filesystem
+
     def code_config(self, name: str) -> dict[str, Any] | None:
         """Return the code-sync config for *name*, if it declares one."""
         spec = self.specs.get(name)

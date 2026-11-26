@@ -78,11 +78,7 @@ class RemoteDispatchManager:
         watcher: ThreadPoolExecutor,
     ) -> Future[dict[str, Any]]:
         """Submit one task to a named executor and return its watcher future."""
-        code_bundle = self._ensure_code_bundle(executor_name=executor_name, env=node.task_def.env)
-        self._ensure_artifact_store()
-        for key in _DRIVER_LOCAL_KEYS:
-            payload.pop(key, None)
-        payload["resources"] = {
+        resources = {
             "threads": node.threads,
             "memory_gb": node.memory_gb,
             "memory_mib": node.memory_mib,
@@ -90,6 +86,18 @@ class RemoteDispatchManager:
             "gpu": node.gpu,
             "gpu_type": gpu_type,
         }
+        if self.registry.shares_filesystem(executor_name):
+            # The worker reads and writes the driver's own paths, so the payload
+            # a local worker would get needs no code bundle and no staging.
+            payload["resources"] = resources
+            return self._submit(
+                node=node, executor_name=executor_name, payload=payload, watcher=watcher
+            )
+        code_bundle = self._ensure_code_bundle(executor_name=executor_name, env=node.task_def.env)
+        self._ensure_artifact_store()
+        for key in _DRIVER_LOCAL_KEYS:
+            payload.pop(key, None)
+        payload["resources"] = resources
         image = remote_image(task_def=node.task_def)
         if image is not None:
             payload["image"] = image
@@ -123,6 +131,19 @@ class RemoteDispatchManager:
                 "bucket": self._artifact_store.bucket,
                 "prefix": self._artifact_store.prefix,
             }
+        return self._submit(
+            node=node, executor_name=executor_name, payload=payload, watcher=watcher
+        )
+
+    def _submit(
+        self,
+        *,
+        node: NodeRun,
+        executor_name: str,
+        payload: dict[str, Any],
+        watcher: ThreadPoolExecutor,
+    ) -> Future[dict[str, Any]]:
+        """Hand *payload* to the executor and watch the job it starts."""
         handle = self.registry.get(executor_name).submit(attempt=payload)
         self.stats.record_submit(executor=executor_name)
         self._handles[node.node_id] = handle
@@ -156,7 +177,12 @@ class RemoteDispatchManager:
             self.cancel(node_id=node_id)
 
     def capture_logs(self, *, node: NodeRun, handle: RemoteJobHandle) -> None:
-        """Fetch pod logs and write them to the standard task log paths."""
+        """Fetch pod logs and write them to the standard task log paths.
+
+        A shared-filesystem worker wrote the task's logs at those paths itself.
+        """
+        if node.executor_name is not None and self.registry.shares_filesystem(node.executor_name):
+            return
         try:
             logs = handle.logs_tail(lines=10000)
         except Exception:

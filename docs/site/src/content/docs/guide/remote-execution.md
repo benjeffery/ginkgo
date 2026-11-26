@@ -129,6 +129,7 @@ type comes from a separate package in the Ginkgo repository:
 |------|---------|--------|
 | `k8s` | Kubernetes | `ginkgo-k8s` |
 | `batch` | GCP Batch | `ginkgo-gcp` |
+| `slurm` | Slurm, on a shared filesystem | `ginkgo-slurm` |
 
 Install Ginkgo with every first-party plugin:
 
@@ -308,6 +309,52 @@ Before you start:
    ```bash
    gcloud services enable batch.googleapis.com
    ```
+
+### Slurm (`type = "slurm"`)
+
+The Slurm executor runs each task attempt as one `sbatch` job, and needs the
+`ginkgo-slurm` plugin. It is for HPC clusters whose nodes share the driver's
+filesystem, such as a shared home or project directory, at the same paths. Its
+jobs run Ginkgo's ordinary worker from the project root with the driver's own
+Python, so there is no image, no code sync and no artifact store: a task reads
+its inputs and writes its outputs and logs at their real paths, as it would on
+your machine.
+
+```toml
+# ginkgo.toml
+[remote.executors.slurm]
+type = "slurm"
+partition = "standard"
+time_limit = "60m"                 # for tasks that declare no time_limit
+setup = ['mkdir -p "$TMPDIR"']     # shell lines run before the worker starts
+```
+
+Every setting is optional, and an unknown one is an error:
+
+| Setting | Meaning | Default |
+|---------|---------|---------|
+| `partition`, `account` | `--partition` and `--account` for every job | none |
+| `time_limit` | `--time` for a task with no `time_limit` of its own | `"60m"` |
+| `sbatch_args` | Further `sbatch` options, as a list | none |
+| `setup` | Shell lines each job runs before the worker | none |
+| `python` | Interpreter that runs the worker; must be on the shared filesystem | the driver's |
+| `jobs_dir` | Job scripts, payloads, responses and Slurm logs | `".ginkgo/slurm"` |
+| `job_name_prefix` | Start of each job name, to tell runs apart in `squeue` | `"ginkgo"` |
+| `poll_interval` | Seconds between `squeue` polls | `30` |
+| `result_grace` | Seconds a job may be gone from the queue before a missing response is a failure | `60` |
+| `submit_retries` | Further `sbatch` attempts after a failed submission | `3` |
+
+A task's `threads`, `memory`, `gpu` and `time_limit` become `--cpus-per-task`,
+`--mem`, `--gres=gpu:...` and `--time`. Jobs inherit the driver's environment.
+The executor follows all of its jobs with one `squeue --states=all` per poll, and
+reads each task's outcome from the response its worker writes, so Slurm
+accounting (`sacct`) is not needed. A job that leaves the queue without a
+response, killed for its memory or time limit say, fails with its Slurm log,
+and `retries` apply as usual. Stopping the run cancels its jobs with `scancel`.
+
+Any executor type can declare that its workers share the driver's filesystem
+(`ExecutorType(shared_filesystem=True)`). Such an executor is handed the payload
+a local worker gets, with its transport directory under `.ginkgo/transport`.
 
 ## Worker Docker Image
 

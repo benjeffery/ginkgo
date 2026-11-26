@@ -848,7 +848,11 @@ class ConcurrentEvaluator:
         # A remote worker passes files, folders and large values through the
         # artifact store, so a remote task cannot run without one. Raised
         # here, where a failure is not retried, before anything is submitted.
-        if node.executor_name is not None and self._remote_dispatch.artifact_store is None:
+        if (
+            node.executor_name is not None
+            and not self._remote_dispatch.registry.shares_filesystem(node.executor_name)
+            and self._remote_dispatch.artifact_store is None
+        ):
             raise RemoteArtifactStoreMissingError(
                 f"Task {node.task_def.name!r} runs on executor {node.executor_name!r}, but "
                 "no artifact store is configured; set [remote.artifacts] store = "
@@ -1740,7 +1744,11 @@ class ConcurrentEvaluator:
             self._track(future, node=node, on_done=self._handle_task_body_result)
             return
 
-        node.transport_path = Path(tempfile.mkdtemp(prefix=f"ginkgo-transport-{node.node_id}-"))
+        node.transport_path = Path(
+            tempfile.mkdtemp(
+                prefix=f"ginkgo-transport-{node.node_id}-", dir=self._transport_root(node=node)
+            )
+        )
         payload = self._build_worker_payload(node=node)
         # Remote dispatch: the node was placed on an executor, by executor=
         # or by the run's --executor default.
@@ -1755,6 +1763,17 @@ class ConcurrentEvaluator:
         else:
             future = self._executors.python.submit(run_task, payload)
         self._track(future, node=node, on_done=self._on_worker_done)
+
+    def _transport_root(self, *, node: NodeRun) -> Path | None:
+        """Where *node*'s transport directory goes: the system's temporary directory,
+        or the workspace when a shared-filesystem worker on another host must read it."""
+        if node.executor_name is None or not self._remote_dispatch.registry.shares_filesystem(
+            node.executor_name
+        ):
+            return None
+        root = WorkspaceLayout.for_cwd().transport
+        root.mkdir(parents=True, exist_ok=True)
+        return root
 
     def _mark_attempt_in_logs(self, *, node: NodeRun) -> None:
         """Write a header into the task's logs at the start of a retry.
@@ -1936,9 +1955,12 @@ class ConcurrentEvaluator:
         """Return the store large values go through for *node*, if not its transport dir.
 
         A remote worker cannot read the driver's transport directory, so a
-        remote node's large values travel through the shared artifact store.
+        remote node's large values travel through the shared artifact store,
+        unless its worker shares the driver's filesystem.
         """
-        if node.executor_name is None:
+        if node.executor_name is None or self._remote_dispatch.registry.shares_filesystem(
+            node.executor_name
+        ):
             return None
         return self._remote_dispatch.artifact_store
 

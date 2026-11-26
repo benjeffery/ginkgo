@@ -96,6 +96,11 @@ class WorkspaceLayout:
         return self.root / "detached"
 
     @property
+    def transport(self) -> Path:
+        """Task transport directories that shared-filesystem workers on other hosts read."""
+        return self.root / "transport"
+
+    @property
     def staging(self) -> Path:
         """Downloaded remote inputs."""
         return self.root / "staging"
