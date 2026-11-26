@@ -469,3 +469,16 @@ class TestOutAnnotation:
             return (reads, None)
 
         assert plain.type_hints["return"] == tuple[file, file | None]
+
+
+def test_labels_skip_containers_of_upstream_results():
+    from ginkgo.core.task import _render_label_value
+
+    @task()
+    def write(text: str, out: Out[file]):
+        Path(out).write_text(text)
+
+    upstream = write(text="x", out="x.txt")
+    assert _render_label_value([upstream.output["out"]]) is None
+    assert _render_label_value({"a": [upstream]}) is None
+    assert _render_label_value(["fold", 1]) == "['fold', 1]"

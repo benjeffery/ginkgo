@@ -1102,10 +1102,21 @@ def _is_short_scalar_label(rendered: str) -> bool:
 
 
 def _render_label_value(value: Any) -> str | None:
-    """Render one concise label-safe value, or ``None`` for a deferred one."""
-    if value is None or isinstance(value, Expr | ExprList | OutputIndex | OutputName):
+    """Render one concise label-safe value, or ``None`` for one that holds a deferred value."""
+    if value is None or _holds_deferred(value):
         return None
     return str(value)
+
+
+def _holds_deferred(value: Any) -> bool:
+    """Return whether *value* is, or contains, an upstream result not yet known."""
+    if isinstance(value, Expr | ExprList | OutputIndex | OutputName):
+        return True
+    if isinstance(value, dict):
+        return any(_holds_deferred(item) for item in value.values())
+    if isinstance(value, list | tuple | set | frozenset):
+        return any(_holds_deferred(item) for item in value)
+    return False
 
 
 def task(
